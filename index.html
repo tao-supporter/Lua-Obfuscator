@@ -1,0 +1,1110 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Lua難読化ツール</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#ffffff; --panel-2:#f6f8fb; --editor:#fbfcfe;
+    --border:#d7dde8; --border-strong:#c2cadb;
+    --text:#131a26; --muted:#5b6a80; --faint:#8494ab;
+    --accent:#0b6bcb; --accent-strong:#095aa9; --accent-soft:#e2effc;
+    --ok:#0d7a4a; --warn:#9a6206; --err:#b3261e; --err-soft:#fdecea;
+    --ok-soft:#e4f5ec;
+    --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px -12px rgba(16,24,40,.18);
+    --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#080b10; --panel:#10151e; --panel-2:#0c1017; --editor:#0a0e14;
+      --border:#212b3b; --border-strong:#2e3c52;
+      --text:#e7edf6; --muted:#93a3ba; --faint:#647691;
+      --accent:#2ea6ff; --accent-strong:#5cb8ff; --accent-soft:#12283e;
+      --ok:#3ecf8e; --warn:#f5b544; --err:#ff7a72; --err-soft:#33161a;
+      --ok-soft:#0f2c1e;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -12px rgba(0,0,0,.6);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic UI","Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
+    font-size:15px; line-height:1.6;
+    -webkit-text-size-adjust:100%;
+  }
+  button,[role="button"],select,summary,input:not([type="checkbox"]){min-height:2.25rem}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 40px}
+
+  /* ---------- top intro ---------- */
+  .intro{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 18px;margin:2px 0 14px}
+  .intro h1{font-size:21px;line-height:1.3;margin:0;font-weight:700;letter-spacing:.01em}
+  .intro h1 .accent{color:var(--accent)}
+  .intro p{margin:0;color:var(--muted);font-size:13.5px;max-width:640px}
+  .badge{
+    display:inline-block;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;
+    color:var(--accent);background:var(--accent-soft);border:1px solid var(--border);
+    padding:2px 8px;border-radius:999px;margin-bottom:6px;letter-spacing:.04em;
+  }
+
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+
+  /* ---------- controls ---------- */
+  .controls{padding:14px 16px;margin-bottom:14px}
+  .controls-row{display:flex;flex-wrap:wrap;gap:14px 22px;align-items:flex-start}
+  .ctl-group{min-width:0}
+  .ctl-label{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em;margin:0 0 7px}
+  .segmented{display:inline-flex;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px;flex-wrap:wrap}
+  .segmented button{
+    border:0;background:transparent;color:var(--muted);font:inherit;font-size:13.5px;font-weight:600;
+    padding:6px 14px;border-radius:6px;cursor:pointer;min-height:36px;
+  }
+  .segmented button:hover{color:var(--text)}
+  .segmented button.active{background:var(--accent);color:#fff}
+  @media (prefers-color-scheme: dark){ .segmented button.active{color:#04121f} }
+
+  .opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:2px 18px;margin-top:6px}
+  .opt{
+    display:flex;align-items:center;gap:10px;cursor:pointer;padding:7px 6px;border-radius:8px;min-height:44px;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .opt:hover{background:var(--panel-2)}
+  .opt input{
+    appearance:none;-webkit-appearance:none;flex:0 0 auto;margin:0;cursor:pointer;
+    width:42px;height:24px;border-radius:999px;background:var(--border-strong);
+    position:relative;transition:background .15s;
+  }
+  .opt input::after{
+    content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s;
+  }
+  .opt input:checked{background:var(--accent)}
+  .opt input:checked::after{left:21px}
+  .opt input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .opt .opt-text{font-size:13.5px;line-height:1.35}
+  .opt .opt-text small{display:block;color:var(--faint);font-size:11.5px}
+  .opt.disabled{opacity:.45;pointer-events:none}
+
+  .select-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  select{
+    font:inherit;font-size:13.5px;color:var(--text);background:var(--panel-2);
+    border:1px solid var(--border-strong);border-radius:8px;padding:6px 10px;min-height:38px;max-width:100%;
+  }
+
+  .strength{margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .strength .bar{flex:1 1 180px;height:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .strength .fill{height:100%;background:var(--accent);width:0%;transition:width .25s}
+  .strength .score{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .strength .score b{color:var(--text)}
+
+  /* ---------- editors ---------- */
+  .editors{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:880px){ .editors{grid-template-columns:1fr} }
+  .editor-panel{display:flex;flex-direction:column;overflow:hidden}
+  .editor-head{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:9px 12px;border-bottom:1px solid var(--border);background:var(--panel-2);
+  }
+  .editor-head .title{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--faint);flex:0 0 auto}
+  .dot.in{background:var(--accent)} .dot.out{background:var(--ok)}
+  .editor-head .meta{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11.5px;color:var(--faint);margin-left:2px}
+  .editor-head .spacer{flex:1}
+  .mini-btn{
+    font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);background:var(--panel);
+    border:1px solid var(--border-strong);border-radius:7px;padding:4px 10px;cursor:pointer;min-height:36px;
+  }
+  .mini-btn:hover{color:var(--text);border-color:var(--faint)}
+  .mini-btn.primary{color:var(--accent);border-color:var(--accent)}
+  textarea.code{
+    width:100%;flex:1;min-height:330px;resize:vertical;border:0;outline:none;
+    background:var(--editor);color:var(--text);
+    font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+    font-size:13px;line-height:1.6;padding:13px 14px;tab-size:4;white-space:pre;overflow:auto;
+  }
+  @media (max-width:880px){ textarea.code{min-height:250px} }
+  textarea.code::placeholder{color:var(--faint)}
+  .editor-panel.dragover{outline:2px dashed var(--accent);outline-offset:-4px}
+
+  /* ---------- action bar ---------- */
+  .actionbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0}
+  .obf-btn{
+    font:inherit;font-size:16px;font-weight:800;letter-spacing:.02em;cursor:pointer;
+    background:var(--accent);color:#fff;border:0;border-radius:10px;padding:13px 30px;min-height:52px;
+    box-shadow:0 6px 18px -6px var(--accent);
+  }
+  @media (prefers-color-scheme: dark){ .obf-btn{color:#04121f} }
+  .obf-btn:hover{background:var(--accent-strong)}
+  .obf-btn:active{transform:translateY(1px)}
+  .status{font-size:13.5px;color:var(--muted);flex:1 1 220px;min-width:0}
+  .status.ok{color:var(--ok)} .status.err{color:var(--err)}
+  .stats{display:flex;gap:8px;flex-wrap:wrap}
+  .stat{
+    background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 12px;
+    font-size:12px;color:var(--muted);white-space:nowrap;
+  }
+  .stat b{display:block;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:15px;color:var(--text);font-weight:600}
+
+  /* ---------- how to ---------- */
+  .howto{margin-top:20px;padding:16px 18px}
+  .howto h2{font-size:15px;margin:0 0 10px}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media (max-width:880px){ .steps{grid-template-columns:1fr} }
+  .step{border:1px solid var(--border);border-radius:9px;padding:12px 13px;background:var(--panel-2)}
+  .step .num{
+    display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;
+    background:var(--accent);color:#fff;font-size:13px;font-weight:800;margin-bottom:7px;
+  }
+  @media (prefers-color-scheme: dark){ .step .num{color:#04121f} }
+  .step p{margin:0;font-size:13px;color:var(--muted)}
+  .step p b{color:var(--text)}
+  .notes{margin:14px 0 0;padding-left:19px;color:var(--muted);font-size:13px}
+  .notes li{margin:3px 0}
+  .notes code,.step code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;background:var(--accent-soft);padding:1px 5px;border-radius:5px;color:var(--text)}
+  footer{margin-top:16px;color:var(--faint);font-size:12px;text-align:center}
+  .hidden-input{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="intro">
+    <div>
+      <span class="badge">LUA / LUAU</span>
+      <h1>Luaスクリプト<span class="accent">難読化</span>ツール</h1>
+    </div>
+    <p>Lua / Luauスクリプトを読みにくく変換します。左にコードを貼って「難読化する」を押すだけ。変換はすべてこのページの中で行われます。</p>
+  </div>
+
+  <!-- ===== controls ===== -->
+  <section class="panel controls" aria-label="難読化の設定">
+    <div class="controls-row">
+      <div class="ctl-group">
+        <p class="ctl-label">プリセット</p>
+        <div class="segmented" id="presets" role="group" aria-label="プリセット">
+          <button type="button" data-preset="light">軽量</button>
+          <button type="button" data-preset="medium" class="active">標準</button>
+          <button type="button" data-preset="strong">強力</button>
+          <button type="button" data-preset="max">最大</button>
+          <button type="button" data-preset="virtual">仮想化</button>
+        </div>
+      </div>
+      <div class="ctl-group">
+        <p class="ctl-label">文字列の難読化方式</p>
+        <div class="select-row">
+          <select id="optStrings" aria-label="文字列の難読化方式">
+            <option value="none">なし（そのまま）</option>
+            <option value="escape" selected>\ddd エスケープ（安全・推奨）</option>
+            <option value="char">string.char(…) 変換</option>
+            <option value="xor">XORデコーダ（強い）</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="opts" id="opts">
+      <label class="opt"><input type="checkbox" id="optMinify" checked /><span class="opt-text">ミニファイ<small>コメント削除＋空白を圧縮</small></span></label>
+      <label class="opt"><input type="checkbox" id="optRename" checked /><span class="opt-text">ローカル変数を改名<small>local変数・引数を判読不能な名前に</small></span></label>
+      <label class="opt"><input type="checkbox" id="optNumbers" checked /><span class="opt-text">数値を16進数化<small>例: 100 → 0x64</small></span></label>
+      <label class="opt"><input type="checkbox" id="optJunk" /><span class="opt-text">ダミーコード挿入<small>動作しないコードで撹乱</small></span></label>
+      <label class="opt"><input type="checkbox" id="optWrap" /><span class="opt-text">関数でラップ<small>(function(…) … end)(…) で包む</small></span></label>
+      <label class="opt"><input type="checkbox" id="optFull" /><span class="opt-text">全体を暗号化<small>バイト列＋loadstringローダー化</small></span></label>
+      <label class="opt" id="optTamperWrap"><input type="checkbox" id="optTamper" /><span class="opt-text">改ざん検知<small>全体暗号化時、改変されると停止</small></span></label>
+    </div>
+
+    <div class="strength">
+      <span class="score">難読化強度 <b id="strengthLabel">—</b></span>
+      <div class="bar"><div class="fill" id="strengthFill"></div></div>
+      <span class="score" id="strengthScore">0 / 100</span>
+    </div>
+  </section>
+
+  <!-- ===== editors ===== -->
+  <div class="editors">
+    <section class="panel editor-panel" id="inputPanel">
+      <div class="editor-head">
+        <span class="title"><span class="dot in"></span>入力スクリプト</span>
+        <span class="meta" id="inputMeta">0 文字 ・ 0 行</span>
+        <span class="spacer"></span>
+        <button type="button" class="mini-btn" id="btnSample">サンプル</button>
+        <button type="button" class="mini-btn" id="btnFile">ファイルを開く</button>
+        <button type="button" class="mini-btn" id="btnPaste">貼り付け</button>
+        <button type="button" class="mini-btn" id="btnClearInput">クリア</button>
+        <input type="file" id="fileInput" class="hidden-input" accept=".lua,.luau,.txt,text/plain" />
+      </div>
+      <textarea class="code" id="inputCode" spellcheck="false" placeholder="ここにLua / Luauスクリプトを貼り付けてください。&#10;.luaファイルをこの枠にドラッグ＆ドロップしても読み込めます。"></textarea>
+    </section>
+
+    <section class="panel editor-panel">
+      <div class="editor-head">
+        <span class="title"><span class="dot out"></span>難読化された出力</span>
+        <span class="meta" id="outputMeta">—</span>
+        <span class="spacer"></span>
+        <button type="button" class="mini-btn primary" id="btnCopy">コピー</button>
+        <button type="button" class="mini-btn" id="btnDownload">.luaで保存</button>
+      </div>
+      <textarea class="code" id="outputCode" spellcheck="false" readonly placeholder="「難読化する」を押すと、ここに結果が表示されます。"></textarea>
+    </section>
+  </div>
+
+  <!-- ===== action bar ===== -->
+  <div class="actionbar">
+    <button type="button" class="obf-btn" id="btnObfuscate">難読化する</button>
+    <span class="status" id="status" role="status">プリセットを選んで「難読化する」を押してください。</span>
+  </div>
+  <div class="stats" id="stats" aria-label="統計">
+    <span class="stat">元のサイズ<b id="statOrig">—</b></span>
+    <span class="stat">変換後のサイズ<b id="statOut">—</b></span>
+    <span class="stat">サイズ比<b id="statRatio">—</b></span>
+    <span class="stat">改名した変数<b id="statVars">—</b></span>
+    <span class="stat">変換した文字列<b id="statStrs">—</b></span>
+  </div>
+
+  <!-- ===== how to ===== -->
+  <section class="panel howto">
+    <h2>使い方</h2>
+    <div class="steps">
+      <div class="step"><span class="num">1</span><p><b>難読化する</b><br />元のスクリプトを貼り、強さを選んで変換します。まずは「標準」プリセットがおすすめです。</p></div>
+      <div class="step"><span class="num">2</span><p><b>コピーして貼る</b><br />出力の「コピー」を押し、使いたいエディタ画面にそのまま貼り付けます。</p></div>
+      <div class="step"><span class="num">3</span><p><b>実行する</b><br />そのまま実行すれば、元のスクリプトと同じ動作をします。動かない場合はプリセットを1段階下げて再変換してください。</p></div>
+    </div>
+    <ul class="notes">
+      <li>難読化されるのは <code>local</code> で宣言した変数と関数の引数だけです。<code>game</code>、<code>workspace</code>、<code>script</code> などのグローバルやプロパティ名は変更されないので、API呼び出しはそのまま動きます。</li>
+      <li>「全体を暗号化」はスクリプト全体を数値のバイト列に変え、実行時に <code>loadstring</code> で復元する方式です。最も強力ですが、環境によっては読み込みが少し遅くなります。</li>
+      <li>プリセット「仮想化」は、コードを分割・符号化したチャンクの表として埋め込み、実行時に並べ替え・復号・キー生成を行ってから復元して実行する方式です。<code>...</code> の引数や戻り値もそのまま引き継がれます。</li>
+      <li>文字列方式の <code>\ddd</code> エスケープは、文字列リテラルとしてそのまま使えるため、呼び出し構文を壊しにくい安全な方式です。</li>
+      <li>難読化は「読みにくくする」もので、完全な暗号化ではありません。大切な処理はサーバー側に置くのが確実です。</li>
+    </ul>
+  </section>
+
+  <footer>コードはブラウザ内でのみ処理され、外部に送信されることはありません。</footer>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   Lua / Luau Obfuscator (client-side)
+   Pipeline: lex -> collect locals -> rename / strings / numbers
+             -> minify -> junk / wrap -> optional full-payload loader
+   ============================================================ */
+
+var KEYWORDS = {};
+("and break do else elseif end false for function goto if in local nil not or repeat return then true until while continue export type").split(" ").forEach(function(w){ KEYWORDS[w]=true; });
+
+function $(id){ return document.getElementById(id); }
+function randInt(a,b){ return a + Math.floor(Math.random()*(b-a+1)); }
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+/* ---------- UTF-8 byte helpers ---------- */
+function pushCp(bytes, cp){
+  if(cp < 0x80){ bytes.push(cp); }
+  else if(cp < 0x800){ bytes.push(0xC0|(cp>>6), 0x80|(cp&0x3F)); }
+  else if(cp < 0x10000){ bytes.push(0xE0|(cp>>12), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)); }
+  else { bytes.push(0xF0|(cp>>18), 0x80|((cp>>12)&0x3F), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)); }
+}
+function utf8Encode(str){
+  var bytes=[];
+  for(var i=0;i<str.length;i++){
+    var cp=str.codePointAt(i);
+    pushCp(bytes, cp);
+    if(cp>0xFFFF) i++;
+  }
+  return bytes;
+}
+function byteLen(str){ return utf8Encode(str).length; }
+function fmtBytes(n){
+  if(n<1024) return n+" B";
+  if(n<1024*1024) return (n/1024).toFixed(1)+" KB";
+  return (n/(1024*1024)).toFixed(2)+" MB";
+}
+
+/* ---------- Lexer ---------- */
+function lex(code){
+  var toks=[]; var i=0; var n=code.length;
+  function push(type,value){ toks.push({type:type,value:value}); }
+  while(i<n){
+    var c=code[i];
+    if(c===" "||c==="\t"||c==="\n"||c==="\r"||c==="\f"||c==="\v"){
+      var j=i+1; while(j<n && /\s/.test(code[j])) j++;
+      push("space", code.slice(i,j)); i=j; continue;
+    }
+    if(c==="-" && code[i+1]==="-"){
+      var rest=code.slice(i+2);
+      var lm=/^\[(=*)\[/.exec(rest);
+      if(lm){
+        var close="]"+lm[1]+"]";
+        var eidx=code.indexOf(close, i+2+lm[0].length);
+        var jj= eidx===-1 ? n : eidx+close.length;
+        push("comment", code.slice(i,jj)); i=jj; continue;
+      }
+      var nl=code.indexOf("\n", i); if(nl===-1) nl=n;
+      push("comment", code.slice(i,nl)); i=nl; continue;
+    }
+    if(c==="["){
+      var sm=/^\[(=*)\[/.exec(code.slice(i));
+      if(sm){
+        var sclose="]"+sm[1]+"]";
+        var seidx=code.indexOf(sclose, i+sm[0].length);
+        var sj= seidx===-1 ? n : seidx+sclose.length;
+        push("string", code.slice(i,sj)); i=sj; continue;
+      }
+    }
+    if(c==='"' || c==="'"){
+      var q=i+1;
+      while(q<n){
+        var ch=code[q];
+        if(ch==="\\"){ q+=2; continue; }
+        if(ch===c){ q++; break; }
+        if(ch==="\n"){ break; }
+        q++;
+      }
+      push("string", code.slice(i,q)); i=q; continue;
+    }
+    if(/[0-9]/.test(c) || (c==="." && /[0-9]/.test(code[i+1]||""))){
+      var nj=i;
+      if(code[nj]==="0" && (code[nj+1]==="x"||code[nj+1]==="X")){
+        nj+=2; while(nj<n && /[0-9a-fA-F_]/.test(code[nj])) nj++;
+        push("number", code.slice(i,nj)); i=nj; continue;
+      }
+      while(nj<n && /[0-9_]/.test(code[nj])) nj++;
+      if(code[nj]==="." && /[0-9]/.test(code[nj+1]||"")){ nj++; while(nj<n && /[0-9_]/.test(code[nj])) nj++; }
+      if(code[nj]==="e"||code[nj]==="E"){
+        var k=nj+1; if(code[k]==="+"||code[k]==="-") k++;
+        if(/[0-9]/.test(code[k]||"")){ nj=k; while(nj<n && /[0-9]/.test(code[nj])) nj++; }
+      }
+      push("number", code.slice(i,nj)); i=nj; continue;
+    }
+    if(/[A-Za-z_]/.test(c)){
+      var wj=i+1; while(wj<n && /[A-Za-z0-9_]/.test(code[wj])) wj++;
+      var w=code.slice(i,wj);
+      push(KEYWORDS[w]?"keyword":"ident", w); i=wj; continue;
+    }
+    var three=code.substr(i,3), two=code.substr(i,2);
+    if(three==="..."||three==="..="){ push("punct",three); i+=3; continue; }
+    if(["==","~=","<=",">=","..","::","+=","-=","*=","/=","%=","^=","//"].indexOf(two)!==-1){ push("punct",two); i+=2; continue; }
+    push("punct", c); i++;
+  }
+  return toks;
+}
+
+/* ---------- String literal -> bytes ---------- */
+function decodeStringToken(raw){
+  var m=/^\[(=*)\[([\s\S]*)\]\1\]$/.exec(raw);
+  if(m){
+    var content=m[2];
+    if(content.substr(0,2)==="\r\n") content=content.slice(2);
+    else if(content[0]==="\n"||content[0]==="\r") content=content.slice(1);
+    return utf8Encode(content);
+  }
+  var q=raw[0];
+  if((q==='"'||q==="'") && raw.length>=2 && raw[raw.length-1]===q){
+    var inner=raw.slice(1,-1); var bytes=[];
+    var simple={a:7,b:8,f:12,n:10,r:13,t:9,v:11};
+    for(var j=0;j<inner.length;j++){
+      var ch=inner[j];
+      if(ch==="\\"){
+        var e=inner[j+1];
+        if(e===undefined) break;
+        if(simple.hasOwnProperty(e)){ bytes.push(simple[e]); j++; continue; }
+        if(e==="\\"||e==='"'||e==="'"){ bytes.push(e.charCodeAt(0)); j++; continue; }
+        if(e==="\n"){ bytes.push(10); j++; continue; }
+        if(e==="\r"){ bytes.push(10); j++; if(inner[j+1]==="\n") j++; continue; }
+        if(e==="x"){
+          var hex=inner.substr(j+2,2);
+          if(/^[0-9a-fA-F]{2}$/.test(hex)){ bytes.push(parseInt(hex,16)); j+=3; continue; }
+          bytes.push(120); j++; continue;
+        }
+        if(e==="z"){ j++; while(j+1<inner.length && /\s/.test(inner[j+1])) j++; continue; }
+        if(e==="u" && inner[j+2]==="{"){
+          var endB=inner.indexOf("}", j+3);
+          if(endB!==-1){
+            var cp=parseInt(inner.slice(j+3,endB),16);
+            if(!isNaN(cp)){ pushCp(bytes,cp); j=endB; continue; }
+          }
+        }
+        if(/[0-9]/.test(e)){
+          var num=""; var kk=j+1;
+          while(kk<inner.length && /[0-9]/.test(inner[kk]) && num.length<3){ num+=inner[kk]; kk++; }
+          bytes.push(parseInt(num,10)%256); j=kk-1; continue;
+        }
+        pushCp(bytes, e.codePointAt(0)); j++; continue;
+      }
+      var cp2=inner.codePointAt(j);
+      pushCp(bytes, cp2);
+      if(cp2>0xFFFF) j++;
+    }
+    return bytes;
+  }
+  return null;
+}
+
+/* ---------- Collect local declarations ---------- */
+function sigIdx(toks, idx, dir){
+  var k=idx+dir;
+  while(k>=0 && k<toks.length && (toks[k].type==="space"||toks[k].type==="comment")) k+=dir;
+  return (k>=0 && k<toks.length) ? k : -1;
+}
+function collectParams(toks, fnIdx, add){
+  var k=sigIdx(toks, fnIdx, 1);
+  if(k>=0 && toks[k].type==="ident"){
+    k=sigIdx(toks, k, 1);
+    while(k>=0 && (toks[k].value==="."||toks[k].value===":")){
+      var nm=sigIdx(toks, k, 1);
+      if(nm>=0 && toks[nm].type==="ident"){ k=sigIdx(toks, nm, 1); } else break;
+    }
+  }
+  if(k>=0 && toks[k].value==="("){
+    var depth=1; var mm=k+1;
+    while(mm<toks.length && depth>0){
+      var tk=toks[mm];
+      if(tk.value==="(") depth++;
+      else if(tk.value===")"){ depth--; if(depth===0) break; }
+      else if(depth===1 && tk.type==="ident") add(tk.value, mm);
+      mm++;
+    }
+  }
+}
+function collectDeclarations(toks){
+  var decl={}; /* name -> earliest token index */
+  function add(name, idx){ if(decl[name]===undefined || idx<decl[name]) decl[name]=idx; }
+  for(var i=0;i<toks.length;i++){
+    var t=toks[i];
+    if(t.type!=="keyword") continue;
+    if(t.value==="local"){
+      var j=sigIdx(toks, i, 1); if(j<0) continue;
+      if(toks[j].type==="keyword" && toks[j].value==="function"){
+        var fn=sigIdx(toks, j, 1);
+        if(fn>=0 && toks[fn].type==="ident") add(toks[fn].value, fn);
+        collectParams(toks, j, add);
+      } else {
+        var k=j;
+        while(k>=0 && toks[k].type==="ident"){
+          add(toks[k].value, k);
+          var cm=sigIdx(toks, k, 1);
+          if(cm>=0 && toks[cm].value===","){ k=sigIdx(toks, cm, 1); } else break;
+        }
+      }
+    } else if(t.value==="function"){
+      collectParams(toks, i, add);
+    } else if(t.value==="for"){
+      var fk=sigIdx(toks, i, 1);
+      while(fk>=0 && toks[fk].type==="ident"){
+        add(toks[fk].value, fk);
+        var fc=sigIdx(toks, fk, 1);
+        if(fc>=0 && toks[fc].value===","){ fk=sigIdx(toks, fc, 1); } else break;
+      }
+    }
+  }
+  return decl;
+}
+
+/* ---------- Name generator (I / l / 1 style) ---------- */
+function makeNameGen(used){
+  var chars=["I","l","1"];
+  return function(){
+    for(var tries=0; tries<200; tries++){
+      var len=randInt(8,12); var s="_";
+      for(var i=0;i<len;i++) s+=pick(chars);
+      if(s==="________" ) continue;
+      if(!used[s] && !KEYWORDS[s]){ used[s]=true; return s; }
+    }
+    var fallback="_v"+Math.random().toString(36).slice(2,10);
+    used[fallback]=true; return fallback;
+  };
+}
+function uniqueHelperName(src, base){
+  var name=base;
+  while(src.indexOf(name)!==-1) name=base+pick(["x","q","z","k"])+randInt(2,99);
+  return name;
+}
+
+/* ---------- Full-payload loader ---------- */
+function makeLoader(body, antiTamper){
+  var bytes=utf8Encode(body);
+  var keyLen=8; var key=[]; var i;
+  for(i=0;i<keyLen;i++) key.push(randInt(1,255));
+  var enc=bytes.map(function(b,idx){ return b ^ key[idx%keyLen]; });
+  var lines=[];
+  lines.push("local _K={" + key.join(",") + "}");
+  var per=110;
+  var dLines=[];
+  for(i=0;i<enc.length;i+=per) dLines.push(enc.slice(i,i+per).join(","));
+  lines.push("local _D={" + dLines.join(",\n") + "}");
+  if(antiTamper){
+    var h=0;
+    for(i=0;i<enc.length;i++) h=(h + enc[i]*((i%97)+1)) % 999983;
+    lines.push("local _H=0");
+    lines.push("for i=1,#_D do _H=(_H+_D[i]*((i-1)%97+1))%999983 end");
+    lines.push("if _H~=" + h + " then return end");
+  }
+  lines.push("local _B={}");
+  lines.push("for i=1,#_D do _B[i]=string.char(bit32.bxor(_D[i],_K[((i-1)%#_K)+1])) end");
+  lines.push("local _F=(loadstring or load)(table.concat(_B))");
+  lines.push("if _F then return _F(...) end");
+  return lines.join("\n");
+}
+
+/* ---------- Junk code ---------- */
+function junkCode(prefix){
+  var lines=[];
+  lines.push("local "+prefix+"a=("+randInt(120,980)+"*"+randInt(11,97)+"-"+randInt(100,900)+")");
+  lines.push("do local "+prefix+"b="+prefix+"a+"+randInt(1,500)+" if "+prefix+"b<0 then "+prefix+"b=0 end end");
+  lines.push("local "+prefix+"c={"+randInt(1,99)+","+randInt(1,99)+","+randInt(1,99)+","+randInt(1,99)+"}");
+  lines.push("do local "+prefix+"d=("+prefix+"c[1]+"+prefix+"c[2])*"+randInt(2,9)+" end");
+  return lines.join("\n");
+}
+
+/* ---------- Virtual-style chunk loader ----------
+   Reproduces the structure of VM-protected Lua output:
+   return(function(...) ... end)(...) wrapping, the source split into
+   prefixed encoded chunks ("E" = base64, "P" = base85) stored in a
+   shuffled string table, restored by an ipairs + while swap loop,
+   every numeric literal written as a big-number arithmetic expression,
+   char-code tables built from arithmetic expressions, decoders using
+   string.char / table.concat / math.floor with cumulative arithmetic,
+   and a repeat/until shuffle that generates the XOR key at runtime. */
+function numExpr(n){
+  var kind=randInt(0,3);
+  if(n<1000000){
+    if(kind===0){
+      var b=randInt(Math.max(n+1,1000),8000000);
+      var q=randInt(2,900);
+      return "("+(q*b+n)+"%"+b+")";
+    }
+    if(kind===1){
+      var b2=randInt(100000,99999999);
+      return "("+(n+b2)+"-"+b2+")";
+    }
+    if(kind===2){
+      var b3=randInt(100000,9999999);
+      return "(-"+b3+"-(-"+(b3+n)+"))";
+    }
+    var a4=randInt(10000,999999);
+    return "("+a4+"+("+(n-a4)+"))";
+  }
+  var a=randInt(100000,99999999);
+  if(kind%2===0) return "("+(n+a)+"-"+a+")";
+  return "("+a+"+"+(n-a)+")";
+}
+var B64CHARS="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function b64encode(bytes){
+  var out="";
+  for(var i=0;i<bytes.length;i+=3){
+    var b0=bytes[i], b1=(i+1<bytes.length)?bytes[i+1]:0, b2=(i+2<bytes.length)?bytes[i+2]:0;
+    var v=(b0<<16)|(b1<<8)|b2;
+    out+=B64CHARS[(v>>18)&63]+B64CHARS[(v>>12)&63];
+    out+=(i+1<bytes.length)?B64CHARS[(v>>6)&63]:"=";
+    out+=(i+2<bytes.length)?B64CHARS[v&63]:"=";
+  }
+  return out;
+}
+function b85encode(bytes){
+  var out="";
+  for(var i=0;i<bytes.length;i+=4){
+    var r=Math.min(4,bytes.length-i);
+    var v=0, k;
+    for(k=0;k<4;k++) v=v*256+((k<r)?bytes[i+k]:0);
+    var digits=[], tmp=v, d;
+    for(d=4;d>=0;d--){ digits[d]=tmp%85; tmp=Math.floor(tmp/85); }
+    var keep=(r===4)?5:r+1;
+    for(d=0;d<keep;d++) out+=String.fromCharCode(digits[d]+33);
+  }
+  return out;
+}
+function shuffledKey(seed){
+  var y=[], i;
+  for(i=0;i<256;i++) y.push(i);
+  var K=[], s=seed;
+  while(y.length>0){
+    s=(s*81+12345)%4294967296;
+    K.push(y.splice(s%y.length,1)[0]);
+  }
+  return K;
+}
+function luaChunkLiteral(s){
+  var out='"';
+  for(var i=0;i<s.length;i++){
+    var code=s.charCodeAt(i);
+    if(s[i]==='"'||s[i]==='\\') out+="\\"+("00"+code).slice(-3);
+    else out+=s[i];
+  }
+  return out+'"';
+}
+function charTableEntry(ch, val){
+  var key;
+  if(/^[A-Za-z]$/.test(ch)){ key=ch; }
+  else {
+    var esc=ch;
+    if(ch==='"') esc='\\"';
+    else if(ch==='\\') esc='\\\\';
+    key='["'+esc+'"]';
+  }
+  return key+"="+numExpr(val);
+}
+function joinSep(entries){
+  var out="";
+  entries.forEach(function(e,i){ if(i>0) out+=pick([",",";"]); out+=e; });
+  return out;
+}
+function makeVirtualLoader(src){
+  var N=numExpr;
+  var bytes=utf8Encode(src);
+  var seed=randInt(100000,900000000);
+  var K=shuffledKey(seed);
+  var enc=bytes.map(function(b,i){ return b^K[i%256]; });
+  var chunks=[], i;
+  for(i=0;i<enc.length;i+=12) chunks.push(enc.slice(i,i+12));
+  if(chunks.length===0) chunks.push([]);
+  var strs=chunks.map(function(c,idx){
+    return (idx%2===0) ? "E"+b64encode(c) : "P"+b85encode(c);
+  });
+  /* emit groups of chunks in reverse order; the runtime swap loop reverses them back */
+  var order=[], pairs=[], pos=0;
+  while(pos<strs.length){
+    var gsize=Math.min(randInt(3,5), strs.length-pos);
+    for(var gk=gsize-1;gk>=0;gk--) order.push(strs[pos+gk]);
+    if(gsize>1) pairs.push([pos+1, pos+gsize]);
+    pos+=gsize;
+  }
+  var OFFSET=randInt(10000,90000);
+  var lines=[];
+  var ftab="local f={";
+  order.forEach(function(s,idx){ if(idx>0) ftab+=pick([",",";"]); ftab+=luaChunkLiteral(s); });
+  ftab+="}";
+  lines.push(ftab);
+  if(pairs.length){
+    var pairStrs=pairs.map(function(p){ return "{"+N(p[0])+","+N(p[1])+"}"; });
+    lines.push("for k,X in ipairs({"+pairStrs.join(",")+"})do while X["+N(1)+"]<X["+N(2)+"] do f[X["+N(1)+"]],f[X["+N(2)+"]],X["+N(1)+"],X["+N(2)+"]=f[X["+N(2)+"]],f[X["+N(1)+"]],X["+N(1)+"]+"+N(1)+",X["+N(2)+"]-"+N(1)+" end end");
+  }
+  lines.push("local function F(k)return f[k-"+N(OFFSET)+"]end");
+  lines.push("local J=type local y=math.floor local l=table.concat local t=table.insert local j=string.sub local A=string.char local B=string.byte local h=string.len");
+  var b64e=[], bi;
+  for(bi=0;bi<64;bi++) b64e.push(charTableEntry(B64CHARS[bi], bi));
+  lines.push("local X={"+joinSep(b64e)+"}");
+  var b85e=[], ci;
+  for(ci=33;ci<=117;ci++) b85e.push(charTableEntry(String.fromCharCode(ci), ci-33));
+  lines.push("local Z={"+joinSep(b85e)+"}");
+  var loop="local o=f "
+    +"for i="+N(1)+",#o,"+N(1)+" do local K=F(i+"+N(OFFSET)+") "
+    +"if J(K)==\"string\" then local P=j(K,"+N(1)+","+N(1)+") "
+    +"if P==\"E\" then K=j(K,"+N(2)+") local q={} local m="+N(1)+" local L=h(K) "
+    +"while m<=L do local a=X[j(K,m,m)]or "+N(0)+" local b=X[j(K,m+"+N(1)+",m+"+N(1)+")]or "+N(0)+" local c=X[j(K,m+"+N(2)+",m+"+N(2)+")]or "+N(0)+" local d=X[j(K,m+"+N(3)+",m+"+N(3)+")]or "+N(0)+" local p="+N(0)+" "
+    +"if j(K,m+"+N(3)+",m+"+N(3)+")==\"=\" then p="+N(1)+" end if j(K,m+"+N(2)+",m+"+N(2)+")==\"=\" then p="+N(2)+" end "
+    +"local v=((a*"+N(64)+"+b)*"+N(64)+"+c)*"+N(64)+"+d "
+    +"t(q,A(y(v/"+N(65536)+")%"+N(256)+")) if p<"+N(2)+" then t(q,A(y(v/"+N(256)+")%"+N(256)+")) end if p<"+N(1)+" then t(q,A(v%"+N(256)+")) end "
+    +"m=m+"+N(4)+" end o[i]=l(q) "
+    +"elseif P==\"P\" then K=j(K,"+N(2)+") local q={} local m="+N(1)+" local L=h(K) "
+    +"while m<=L do local g=L-m+"+N(1)+" if g>"+N(5)+" then g="+N(5)+" end local v="+N(0)+" local ok=true "
+    +"for n="+N(0)+",g-"+N(1)+" do local d=Z[j(K,m+n,m+n)] if d==nil then ok=false break end v=v*"+N(85)+"+d end "
+    +"if ok then if g<"+N(5)+" then for n=g,"+N(4)+" do v=v*"+N(85)+"+"+N(84)+" end end "
+    +"local nb=g-"+N(1)+" if g=="+N(5)+" then nb="+N(4)+" end "
+    +"for n="+N(0)+",nb-"+N(1)+" do t(q,A(y(v/("+N(256)+"^("+N(3)+"-n)))%"+N(256)+")) end end "
+    +"m=m+g end o[i]=l(q) end end end";
+  lines.push(loop);
+  lines.push("local e={} do local u={} for i="+N(1)+","+N(256)+" do u[i]=i-"+N(1)+" end local g="+N(seed)+" "
+    +"repeat g=(g*"+N(81)+"+"+N(12345)+")%"+N(4294967296)+" local idx=(g%#u)+"+N(1)+" e[#e+"+N(1)+"]=table.remove(u,idx) until #u=="+N(0)+" end");
+  lines.push("local function b(a,c) if bit32 and bit32.bxor then return bit32.bxor(a,c) end local r="+N(0)+" local p="+N(1)+" while a>"+N(0)+" or c>"+N(0)+" do local aa=a%"+N(2)+" local cc=c%"+N(2)+" if aa~=cc then r=r+p end a=y(a/"+N(2)+") c=y(c/"+N(2)+") p=p*"+N(2)+" end return r end "
+    +"local w={} local S=l(o) for i="+N(1)+",#S do w[i]=A(b(B(S,i),e[((i-"+N(1)+")%"+N(256)+")+"+N(1)+"])) end local r=l(w) "
+    +"local z=(loadstring or load)(r) if z then return z(...) end");
+  return { code:"return(function(...)"+lines.join(" ")+" end)(...)", chunks:chunks.length };
+}
+
+/* ---------- Main obfuscation ---------- */
+function obfuscate(src, opts){
+  if(opts.virtual){
+    var vr=makeVirtualLoader(src);
+    return { code:vr.code+"\n", stats:{vars:0, strings:vr.chunks} };
+  }
+  var toks=lex(src);
+  var decl=collectDeclarations(toks);
+  var stats={vars:0, strings:0};
+
+  /* rename map */
+  var renameMap={};
+  if(opts.rename){
+    var used={};
+    toks.forEach(function(t){ if(t.type==="ident") used[t.value]=true; });
+    var gen=makeNameGen(used);
+    Object.keys(decl).forEach(function(name){
+      if(name==="self") return;
+      renameMap[name]=gen();
+    });
+    stats.vars=Object.keys(renameMap).length;
+  }
+
+  /* helper names */
+  var decName=uniqueHelperName(src, "_SdEc");
+  var junkPrefix=uniqueHelperName(src, "_Jq");
+  var needDecoder=false;
+
+  /* precompute significant neighbours */
+  var prevSig=[], nextSig=[];
+  var last=-1, i;
+  for(i=0;i<toks.length;i++){
+    prevSig[i]=last;
+    if(toks[i].type!=="space" && toks[i].type!=="comment") last=i;
+  }
+  last=-1;
+  for(i=toks.length-1;i>=0;i--){
+    nextSig[i]=last;
+    if(toks[i].type!=="space" && toks[i].type!=="comment") last=i;
+  }
+
+  var parts=[]; /* {text, type} */
+  var braceDepth=0;
+  for(i=0;i<toks.length;i++){
+    var t=toks[i];
+    if(t.type==="space"){
+      if(!opts.minify) parts.push({text:t.value, type:"space"});
+      continue;
+    }
+    if(t.type==="comment"){
+      if(!opts.minify) parts.push({text:t.value, type:"comment"});
+      continue;
+    }
+    if(t.type==="punct"){
+      if(t.value==="}") braceDepth=Math.max(0,braceDepth-1);
+      parts.push({text:t.value, type:"punct"});
+      if(t.value==="{") braceDepth++;
+      continue;
+    }
+    if(t.type==="string"){
+      var out=t.value;
+      if(opts.strings!=="none"){
+        var bytes=decodeStringToken(t.value);
+        if(bytes!==null && bytes.length>0){
+          if(opts.strings==="escape"){
+            out='"' + bytes.map(function(b){ return "\\"+("00"+b).slice(-3); }).join("") + '"';
+            stats.strings++;
+          } else if(opts.strings==="char"){
+            out="string.char(" + bytes.join(",") + ")";
+            stats.strings++;
+          } else if(opts.strings==="xor"){
+            var key=randInt(1,255);
+            var enc=bytes.map(function(b){ return b^key; });
+            out=decName+"({"+enc.join(",")+"},"+key+")";
+            needDecoder=true;
+            stats.strings++;
+          }
+        } else if(bytes!==null && bytes.length===0){
+          out='""';
+        }
+      }
+      parts.push({text:out, type:"string"});
+      continue;
+    }
+    if(t.type==="number"){
+      var nout=t.value;
+      if(opts.numbers && /^\d[\d_]*$/.test(t.value)){
+        try{
+          var bi=BigInt(t.value.replace(/_/g,""));
+          nout="0x"+bi.toString(16);
+        }catch(e){ /* keep original */ }
+      }
+      parts.push({text:nout, type:"number"});
+      continue;
+    }
+    if(t.type==="ident"){
+      var newName=null;
+      if(opts.rename && renameMap[t.value] && i>=decl[t.value]){
+        var p=prevSig[i]>=0 ? toks[prevSig[i]] : null;
+        var nx=nextSig[i]>=0 ? toks[nextSig[i]] : null;
+        var isField = p && (p.value==="."||p.value===":"||p.value==="::");
+        var isTableKey = braceDepth>0 && nx && nx.value==="=";
+        var isGotoLabel = p && p.value==="::";
+        if(!isField && !isTableKey && !isGotoLabel) newName=renameMap[t.value];
+      }
+      parts.push({text:newName||t.value, type:"ident"});
+      continue;
+    }
+    /* keyword */
+    parts.push({text:t.value, type:"keyword"});
+  }
+
+  /* join */
+  var body="";
+  if(opts.minify){
+    var prev=null;
+    parts.forEach(function(pt){
+      if(prev){
+        var la=prev.text[prev.text.length-1], fb=pt.text[0];
+        var need=false;
+        if(la && fb && /[A-Za-z0-9_]/.test(la) && /[A-Za-z0-9_]/.test(fb)) need=true;
+        if(la==="-" && fb==="-") need=true;
+        if(prev.type==="number" && pt.text.substr(0,2)==="..") need=true;
+        if(need) body+=" ";
+      }
+      body+=pt.text;
+      prev=pt;
+    });
+  } else {
+    body=parts.map(function(p){ return p.text; }).join("");
+  }
+
+  /* prefix: decoder + junk */
+  var prefix="";
+  if(needDecoder){
+    prefix+="local "+decName+"=function(t,k) local o={} for i=1,#t do o[i]=string.char(bit32.bxor(t[i],k)) end return table.concat(o) end\n";
+  }
+  if(opts.junk){
+    prefix+=junkCode(junkPrefix)+"\n";
+  }
+  body=prefix+body;
+
+  if(opts.wrap && !opts.full){
+    body="(function(...)\n"+body+"\nend)(...)";
+  }
+  if(opts.full){
+    body=makeLoader(body, opts.tamper);
+  }
+  return { code:"-- Obfuscated\n"+body+"\n", stats:stats };
+}
+
+/* ============================================================
+   UI
+   ============================================================ */
+var SAMPLE = [
+"-- サンプルスクリプト",
+"local player = game.Players.LocalPlayer",
+"local walkSpeed = 50",
+"local message = \"Hello, World!\"",
+"",
+"local function greet(name, count)",
+"    local text = \"こんにちは、\" .. name .. \"さん\"",
+"    for i = 1, count do",
+"        print(text, i)",
+"    end",
+"    return text",
+"end",
+"",
+"local result = greet(player.Name, 3)",
+"print(message, result, walkSpeed)",
+""
+].join("\n");
+
+var PRESETS={
+  light:  {minify:true,  rename:true,  strings:"none",   numbers:false, junk:false, wrap:false, full:false, tamper:false},
+  medium: {minify:true,  rename:true,  strings:"escape", numbers:true,  junk:false, wrap:false, full:false, tamper:false},
+  strong: {minify:true,  rename:true,  strings:"xor",    numbers:true,  junk:true,  wrap:false, full:false, tamper:false},
+  max:    {minify:true,  rename:true,  strings:"xor",    numbers:true,  junk:true,  wrap:false, full:true,  tamper:true},
+  virtual:{minify:true,  rename:true,  strings:"escape", numbers:true,  junk:false, wrap:false, full:false, tamper:false}
+};
+
+var virtualMode=false;
+
+function readOpts(){
+  return {
+    virtual: virtualMode,
+    minify: $("optMinify").checked,
+    rename: $("optRename").checked,
+    strings: $("optStrings").value,
+    numbers: $("optNumbers").checked,
+    junk: $("optJunk").checked,
+    wrap: $("optWrap").checked,
+    full: $("optFull").checked,
+    tamper: $("optTamper").checked
+  };
+}
+function applyOpts(o){
+  $("optMinify").checked=o.minify;
+  $("optRename").checked=o.rename;
+  $("optStrings").value=o.strings;
+  $("optNumbers").checked=o.numbers;
+  $("optJunk").checked=o.junk;
+  $("optWrap").checked=o.wrap;
+  $("optFull").checked=o.full;
+  $("optTamper").checked=o.tamper;
+  syncTamperState();
+  updateStrength();
+}
+function syncTamperState(){
+  $("optTamperWrap").classList.toggle("disabled", !$("optFull").checked);
+}
+function strengthOf(o){
+  if(o.virtual) return 100;
+  var s=0;
+  if(o.minify) s+=10;
+  if(o.rename) s+=25;
+  if(o.strings==="escape") s+=20; else if(o.strings==="char") s+=25; else if(o.strings==="xor") s+=35;
+  if(o.numbers) s+=10;
+  if(o.junk) s+=10;
+  if(o.wrap) s+=5;
+  if(o.full) s+=40;
+  if(o.full && o.tamper) s+=5;
+  if(s>100) s=100;
+  return s;
+}
+function updateStrength(){
+  var s=strengthOf(readOpts());
+  $("strengthFill").style.width=s+"%";
+  $("strengthScore").textContent=s+" / 100";
+  $("strengthLabel").textContent= s>=85?"最高レベル": s>=60?"高め": s>=35?"中程度": s>0?"低め":"なし";
+}
+function clearPresetActive(){
+  var btns=$("presets").querySelectorAll("button");
+  btns.forEach(function(b){ b.classList.remove("active"); });
+}
+function setStatus(msg, kind){
+  var el=$("status");
+  el.textContent=msg;
+  el.className="status"+(kind?" "+kind:"");
+}
+function updateInputMeta(){
+  var v=$("inputCode").value;
+  var lines=v ? v.split("\n").length : 0;
+  $("inputMeta").textContent=v.length.toLocaleString()+" 文字 ・ "+lines+" 行 ・ "+fmtBytes(byteLen(v));
+}
+function updateOutputMeta(text){
+  if(!text){ $("outputMeta").textContent="—"; return; }
+  $("outputMeta").textContent=text.length.toLocaleString()+" 文字 ・ "+text.split("\n").length+" 行 ・ "+fmtBytes(byteLen(text));
+}
+
+function doObfuscate(){
+  var src=$("inputCode").value;
+  if(!src.trim()){
+    setStatus("入力が空です。左の枠にLuaスクリプトを貼り付けてください。", "err");
+    $("inputCode").focus();
+    return;
+  }
+  var opts=readOpts();
+  try{
+    var res=obfuscate(src, opts);
+    $("outputCode").value=res.code;
+    updateOutputMeta(res.code);
+    var ob=byteLen(src), nb=byteLen(res.code);
+    $("statOrig").textContent=fmtBytes(ob);
+    $("statOut").textContent=fmtBytes(nb);
+    $("statRatio").textContent=ob? Math.round(nb/ob*100)+"%" : "—";
+    $("statVars").textContent=res.stats.vars+" 個";
+    $("statStrs").textContent=res.stats.strings+" 個";
+    setStatus("難読化が完了しました。出力の「コピー」から貼り付けて使ってください。", "ok");
+  }catch(err){
+    setStatus("変換中にエラーが発生しました: "+(err && err.message ? err.message : err), "err");
+  }
+}
+
+function copyOutput(){
+  var out=$("outputCode").value;
+  if(!out){ setStatus("先に「難読化する」を押して出力を生成してください。", "err"); return; }
+  function done(){ setStatus("出力コードをコピーしました。エディタに貼り付けできます。", "ok"); }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(out).then(done, function(){
+      $("outputCode").select();
+      try{ document.execCommand("copy"); done(); }catch(e){ setStatus("コピーに失敗しました。出力欄を長押し／右クリックで選択してコピーしてください。", "err"); }
+    });
+  } else {
+    $("outputCode").select();
+    try{ document.execCommand("copy"); done(); }catch(e){ setStatus("コピーに失敗しました。手動で選択してコピーしてください。", "err"); }
+  }
+}
+function downloadOutput(){
+  var out=$("outputCode").value;
+  if(!out){ setStatus("先に「難読化する」を押して出力を生成してください。", "err"); return; }
+  var blob=new Blob([out], {type:"text/plain;charset=utf-8"});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a");
+  a.href=url; a.download="obfuscated.lua";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  setStatus("obfuscated.lua を保存しました。", "ok");
+}
+
+/* ---------- wiring ---------- */
+document.addEventListener("DOMContentLoaded", function(){
+  $("inputCode").value=SAMPLE;
+  updateInputMeta();
+  applyOpts(PRESETS.medium);
+  document.querySelector('#presets button[data-preset="medium"]').classList.add("active");
+
+  $("presets").addEventListener("click", function(e){
+    var btn=e.target.closest("button[data-preset]");
+    if(!btn) return;
+    clearPresetActive();
+    btn.classList.add("active");
+    virtualMode = (btn.getAttribute("data-preset")==="virtual");
+    applyOpts(PRESETS[btn.getAttribute("data-preset")]);
+    setStatus("プリセット「"+btn.textContent+"」を適用しました。");
+  });
+
+  ["optMinify","optRename","optNumbers","optJunk","optWrap","optFull","optTamper"].forEach(function(id){
+    $(id).addEventListener("change", function(){
+      virtualMode=false;
+      clearPresetActive();
+      syncTamperState();
+      updateStrength();
+    });
+  });
+  $("optStrings").addEventListener("change", function(){ virtualMode=false; clearPresetActive(); updateStrength(); });
+  $("optFull").addEventListener("change", syncTamperState);
+
+  $("inputCode").addEventListener("input", updateInputMeta);
+  $("inputCode").addEventListener("keydown", function(e){
+    if(e.key==="Tab"){
+      e.preventDefault();
+      var ta=e.target, s=ta.selectionStart, en=ta.selectionEnd;
+      ta.setRangeText("    ", s, en, "end");
+      updateInputMeta();
+    }
+  });
+
+  $("btnObfuscate").addEventListener("click", doObfuscate);
+  $("btnCopy").addEventListener("click", copyOutput);
+  $("btnDownload").addEventListener("click", downloadOutput);
+  $("btnSample").addEventListener("click", function(){
+    $("inputCode").value=SAMPLE;
+    updateInputMeta();
+    setStatus("サンプルスクリプトを入力しました。そのまま「難読化する」を試せます。");
+  });
+  $("btnClearInput").addEventListener("click", function(){
+    $("inputCode").value="";
+    updateInputMeta();
+    $("inputCode").focus();
+  });
+  $("btnPaste").addEventListener("click", function(){
+    if(navigator.clipboard && navigator.clipboard.readText){
+      navigator.clipboard.readText().then(function(t){
+        if(t){ $("inputCode").value=t; updateInputMeta(); setStatus("クリップボードから貼り付けました。", "ok"); }
+        else setStatus("クリップボードが空でした。", "err");
+      }, function(){ setStatus("貼り付けできませんでした。入力欄に直接ペーストしてください。", "err"); });
+    } else {
+      setStatus("この環境では自動貼り付けが使えません。入力欄に直接ペーストしてください。", "err");
+      $("inputCode").focus();
+    }
+  });
+  $("btnFile").addEventListener("click", function(){ $("fileInput").click(); });
+  $("fileInput").addEventListener("change", function(e){
+    var f=e.target.files && e.target.files[0];
+    if(!f) return;
+    f.text().then(function(t){
+      $("inputCode").value=t;
+      updateInputMeta();
+      setStatus("ファイル「"+f.name+"」を読み込みました。", "ok");
+    }).catch(function(){ setStatus("ファイルの読み込みに失敗しました。", "err"); });
+    e.target.value="";
+  });
+
+  var panel=$("inputPanel"), ta=$("inputCode");
+  ["dragenter","dragover"].forEach(function(ev){
+    panel.addEventListener(ev, function(e){ e.preventDefault(); panel.classList.add("dragover"); });
+  });
+  ["dragleave","drop"].forEach(function(ev){
+    panel.addEventListener(ev, function(e){ e.preventDefault(); panel.classList.remove("dragover"); });
+  });
+  panel.addEventListener("drop", function(e){
+    var f=e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if(!f) return;
+    f.text().then(function(t){
+      ta.value=t; updateInputMeta();
+      setStatus("ファイル「"+f.name+"」を読み込みました。", "ok");
+    }).catch(function(){ setStatus("ファイルの読み込みに失敗しました。", "err"); });
+  });
+});
+</script>
+</body>
+</html>
