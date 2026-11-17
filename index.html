@@ -444,64 +444,312 @@ function decodeStringToken(raw){
   return null;
 }
 
-/* ---------- Collect local declarations ---------- */
+/* ---------- Scope-aware rename analysis ----------
+   Walks the token stream once, tracking scopes (chunk / function /
+   do / if-branch / repeat) and table-constructor nesting, and decides
+   for every identifier token whether it is a variable reference that
+   resolves to a local binding (and which new name it gets).
+   Anything that is not a plain variable reference - table keys,
+   fields, method names, labels, type names - is left untouched.
+   Table keys are only recognised when the identifier sits directly
+   in a table constructor at a field start ({ , or ;) followed by =,
+   so locals declared or assigned inside functions nested in a table
+   (the usual Callback = function(...) ... end style) are renamed
+   consistently at their declaration and at every use. */
 function sigIdx(toks, idx, dir){
   var k=idx+dir;
   while(k>=0 && k<toks.length && (toks[k].type==="space"||toks[k].type==="comment")) k+=dir;
   return (k>=0 && k<toks.length) ? k : -1;
 }
-function collectParams(toks, fnIdx, add){
-  var k=sigIdx(toks, fnIdx, 1);
-  if(k>=0 && toks[k].type==="ident"){
-    k=sigIdx(toks, k, 1);
-    while(k>=0 && (toks[k].value==="."||toks[k].value===":")){
-      var nm=sigIdx(toks, k, 1);
-      if(nm>=0 && toks[nm].type==="ident"){ k=sigIdx(toks, nm, 1); } else break;
-    }
+function analyzeRenames(toks){
+  var n=toks.length;
+  var renameTo=[]; for(var z=0;z<n;z++) renameTo.push(null);
+  var declTok={}, skipTok={};
+  var usedNames={};
+  toks.forEach(function(t){ if(t.type==="ident") usedNames[t.value]=true; });
+  var gen=makeNameGen(usedNames);
+  var declCount=0;
+  function newBinding(name){
+    declCount++;
+    if(name==="self") return {newName:"self", visibleFrom:0};
+    return {newName:gen(), visibleFrom:0};
   }
-  if(k>=0 && toks[k].value==="("){
-    var depth=1; var mm=k+1;
-    while(mm<toks.length && depth>0){
-      var tk=toks[mm];
-      if(tk.value==="(") depth++;
-      else if(tk.value===")"){ depth--; if(depth===0) break; }
-      else if(depth===1 && tk.type==="ident") add(tk.value, mm);
-      mm++;
-    }
-  }
-}
-function collectDeclarations(toks){
-  var decl={}; /* name -> earliest token index */
-  function add(name, idx){ if(decl[name]===undefined || idx<decl[name]) decl[name]=idx; }
-  for(var i=0;i<toks.length;i++){
-    var t=toks[i];
-    if(t.type!=="keyword") continue;
-    if(t.value==="local"){
-      var j=sigIdx(toks, i, 1); if(j<0) continue;
-      if(toks[j].type==="keyword" && toks[j].value==="function"){
-        var fn=sigIdx(toks, j, 1);
-        if(fn>=0 && toks[fn].type==="ident") add(toks[fn].value, fn);
-        collectParams(toks, j, add);
-      } else {
-        var k=j;
-        while(k>=0 && toks[k].type==="ident"){
-          add(toks[k].value, k);
-          var cm=sigIdx(toks, k, 1);
-          if(cm>=0 && toks[cm].value===","){ k=sigIdx(toks, cm, 1); } else break;
+  function sig(i,dir){ return sigIdx(toks,i,dir); }
+
+  /* Index of the last significant token of the expression (list)
+     starting at startIdx (a significant index). Used to find where a
+     local declaration's initialiser ends (the new locals become
+     visible only after it, so `local x = x` reads the outer x) and
+     where a repeat..until condition ends. */
+  function scanExprEnd(startIdx){
+    var last=startIdx, prev=-1;
+    var par=0, brk=0, brc=0;
+    var stk=[]; /* block constructs opened inside the expression: function / if / for / while / do / repeat */
+    var i=startIdx;
+    while(i>=0 && i<n){
+      var t=toks[i], v=t.value;
+      var atZero=(par===0&&brk===0&&brc===0&&stk.length===0);
+      if(atZero && prev>=0){
+        var pv=toks[prev].value, pt=toks[prev].type;
+        var prevEnds=(pt==="ident"||pt==="number"||pt==="string"||pv===")"||pv==="]"||pv==="}"||pv==="..."||pv==="true"||pv==="false"||pv==="nil"||pv==="end");
+        if(v===";") break;
+        if(t.type==="keyword" && (v==="end"||v==="else"||v==="elseif"||v==="until"||v==="then"||v==="do")) break;
+        if(prevEnds && t.type==="keyword" && (v==="local"||v==="if"||v==="for"||v==="while"||v==="repeat"||v==="return"||v==="break"||v==="goto"||v==="function")) break;
+        if(prevEnds && t.type==="ident") break;
+        if(prevEnds && v==="::") break;
+      }
+      if(t.type==="punct"){
+        if(v==="(") par++;
+        else if(v===")"){ if(atZero) break; par--; }
+        else if(v==="[") brk++;
+        else if(v==="]"){ if(atZero) break; brk--; }
+        else if(v==="{") brc++;
+        else if(v==="}"){ if(atZero) break; brc--; }
+      } else if(t.type==="keyword"){
+        if(v==="function"||v==="if"||v==="repeat") stk.push({k:v, awaitDo:false});
+        else if(v==="for"||v==="while") stk.push({k:v, awaitDo:true});
+        else if(v==="do"){
+          var topS=stk[stk.length-1];
+          if(topS && topS.awaitDo) topS.awaitDo=false;
+          else stk.push({k:"do", awaitDo:false});
+        }
+        else if(v==="end"){ if(atZero) break; stk.pop(); }
+        else if(v==="until"){
+          var topU=stk[stk.length-1];
+          if(topU && topU.k==="repeat") stk.pop();
         }
       }
-    } else if(t.value==="function"){
-      collectParams(toks, i, add);
-    } else if(t.value==="for"){
-      var fk=sigIdx(toks, i, 1);
-      while(fk>=0 && toks[fk].type==="ident"){
-        add(toks[fk].value, fk);
-        var fc=sigIdx(toks, fk, 1);
-        if(fc>=0 && toks[fc].value===","){ fk=sigIdx(toks, fc, 1); } else break;
+      last=i; prev=i;
+      i=sig(i,1);
+    }
+    return last;
+  }
+
+  /* Consume a Luau type annotation whose first significant token is
+     fromIdx; marks its tokens so they are never treated as references.
+     Returns the first significant index that is not part of the type. */
+  function skipType(fromIdx){
+    var i=fromIdx;
+    while(i>=0 && i<n){
+      var t=toks[i], v=t.value;
+      if(t.type==="ident"||t.type==="string"||t.type==="number"){ skipTok[i]=true; i=sig(i,1); continue; }
+      if(v==="."||v==="|"||v==="&"||v==="?"||v==="-"){ skipTok[i]=true; i=sig(i,1); continue; }
+      if(v==="{"||v==="("||v==="["){
+        var close=(v==="{")?"}":(v==="("?")":"]");
+        var d=0, j=i;
+        while(j>=0 && j<n){
+          skipTok[j]=true;
+          if(toks[j].value===v) d++;
+          else if(toks[j].value===close){ d--; if(d===0){ j=sig(j,1); break; } }
+          j=sig(j,1);
+        }
+        i=j; continue;
       }
+      break;
+    }
+    return i;
+  }
+
+  var rootScope={vars:{}};
+  var frames=[];  /* {kind: table|paren|bracket|block|function|repeat, scope?} */
+  var expect=[];  /* pending for/while/if headers waiting for their do/then */
+  var pops=[];    /* repeat frames to drop after their until expression: {frame, at} */
+  function curScope(){
+    for(var i=frames.length-1;i>=0;i--) if(frames[i].scope) return frames[i].scope;
+    return rootScope;
+  }
+  function resolve(name, idx){
+    for(var i=frames.length-1;i>=0;i--){
+      var s=frames[i].scope; if(!s) continue;
+      var b=s.vars[name];
+      if(b && b.visibleFrom<=idx) return b.newName;
+    }
+    var rb=rootScope.vars[name];
+    if(rb && rb.visibleFrom<=idx) return rb.newName;
+    return null;
+  }
+  function findFrame(kinds){
+    for(var i=frames.length-1;i>=0;i--) if(kinds.indexOf(frames[i].kind)>=0) return i;
+    return -1;
+  }
+
+  function handleFunction(fnIdx){
+    var scope={vars:{}};
+    frames.push({kind:"function", scope:scope});
+    var j=sig(fnIdx,1);
+    if(j>=0 && toks[j].type==="ident"){
+      var k=j;
+      while(true){
+        var d=sig(k,1);
+        if(d>=0 && (toks[d].value==="."||toks[d].value===":")){
+          var nm=sig(d,1);
+          if(nm>=0 && toks[nm].type==="ident"){ k=nm; continue; }
+        }
+        break;
+      }
+      j=k;
+    }
+    var p=(j>=0 && toks[j].value==="(") ? j : sig(j,1);
+    if(p<0 || toks[p].value!=="(") return;
+    var segments=[], cur=[], rel=0, idx=sig(p,1), closeIdx=-1;
+    while(idx>=0 && idx<n){
+      var tk=toks[idx];
+      if(tk.value==="("||tk.value==="["||tk.value==="{") rel++;
+      else if(tk.value===")"||tk.value==="]"||tk.value==="}"){
+        if(rel===0){ closeIdx=idx; break; }
+        rel--;
+      }
+      else if(tk.value==="," && rel===0){ segments.push(cur); cur=[]; idx=sig(idx,1); continue; }
+      cur.push(idx);
+      idx=sig(idx,1);
+    }
+    segments.push(cur);
+    segments.forEach(function(seg){
+      var seenColon=false, paramDone=false;
+      seg.forEach(function(ti){
+        var tt=toks[ti];
+        if(tt.value===":") seenColon=true;
+        if(tt.type==="ident"){
+          if(!seenColon && !paramDone){
+            var b=newBinding(tt.value); b.visibleFrom=ti;
+            scope.vars[tt.value]=b; declTok[ti]=b.newName; paramDone=true;
+          } else skipTok[ti]=true;
+        }
+      });
+    });
+    if(closeIdx>=0){
+      var after=sig(closeIdx,1);
+      if(after>=0 && toks[after].value===":") skipType(sig(after,1));
     }
   }
-  return decl;
+
+  function handleLocal(i){
+    var j=sig(i,1);
+    if(j>=0 && toks[j].type==="keyword" && toks[j].value==="function"){
+      var nm=sig(j,1);
+      if(nm>=0 && toks[nm].type==="ident"){
+        var b=newBinding(toks[nm].value); b.visibleFrom=nm;
+        curScope().vars[toks[nm].value]=b; declTok[nm]=b.newName;
+      }
+      return;
+    }
+    var bindings=[], lastName=-1, k=j;
+    while(k>=0 && toks[k].type==="ident"){
+      var b2=newBinding(toks[k].value);
+      curScope().vars[toks[k].value]=b2; declTok[k]=b2.newName;
+      bindings.push(b2); lastName=k;
+      var nx=sig(k,1);
+      if(nx>=0 && toks[nx].value===":") nx=skipType(sig(nx,1));
+      if(nx>=0 && toks[nx].value===","){ k=sig(nx,1); continue; }
+      k=nx; break;
+    }
+    if(bindings.length){
+      var vis=lastName;
+      if(k>=0 && toks[k].value==="="){
+        var st=sig(k,1);
+        if(st>=0) vis=scanExprEnd(st);
+      }
+      bindings.forEach(function(b){ b.visibleFrom=vis; });
+    }
+  }
+
+  function handleFor(i){
+    var names=[], k=sig(i,1);
+    while(k>=0 && toks[k].type==="ident"){
+      names.push({name:toks[k].value, idx:k});
+      var nx=sig(k,1);
+      if(nx>=0 && toks[nx].value===","){ k=sig(nx,1); continue; }
+      break;
+    }
+    var scope={vars:{}};
+    var bindings=names.map(function(nm){
+      var b=newBinding(nm.name); scope.vars[nm.name]=b; declTok[nm.idx]=b.newName; return b;
+    });
+    expect.push({kind:"for", depth:frames.length, scope:scope, bindings:bindings});
+  }
+
+  function handleDo(i){
+    var top=expect[expect.length-1];
+    if(top && (top.kind==="for"||top.kind==="while") && top.depth===frames.length){
+      expect.pop();
+      frames.push({kind:"block", scope:top.scope});
+      top.bindings.forEach(function(b){ b.visibleFrom=i; });
+    } else {
+      frames.push({kind:"block", scope:{vars:{}}});
+    }
+  }
+  function handleThen(){
+    var top=expect[expect.length-1];
+    if(top && (top.kind==="if"||top.kind==="elseif") && top.depth===frames.length){
+      expect.pop();
+      frames.push({kind:"block", scope:{vars:{}}});
+    }
+  }
+  function handleUntil(i){
+    var fi=findFrame(["repeat"]);
+    if(fi<0) return;
+    var st=sig(i,1);
+    var endIdx=(st>=0)? scanExprEnd(st) : i;
+    pops.push({frame:frames[fi], at:endIdx});
+  }
+
+  function handleIdent(i){
+    if(declTok[i]!==undefined){ renameTo[i]=declTok[i]; return; }
+    if(skipTok[i]) return;
+    var name=toks[i].value;
+    var p=sig(i,-1), nx=sig(i,1);
+    var pv=(p>=0)?toks[p].value:null, nv=(nx>=0)?toks[nx].value:null;
+    if(pv==="."||pv===":") return;                          /* field / method */
+    if(pv==="::" && nv==="::") return;                      /* goto label name */
+    if(p>=0 && toks[p].type==="keyword" && (toks[p].value==="goto"||toks[p].value==="type"||toks[p].value==="export")) return;
+    var top=frames[frames.length-1];
+    if(top && top.kind==="table"){
+      if((pv==="{"||pv===","||pv===";") && nv==="=") return; /* table key */
+      if(pv===":") return;                                   /* Luau type field */
+    }
+    var nn=resolve(name, i);
+    if(nn && nn!==name) renameTo[i]=nn;
+  }
+
+  for(var i=0;i<n;i++){
+    for(var q=pops.length-1;q>=0;q--){
+      if(pops[q].at<i){
+        var fi=frames.indexOf(pops[q].frame);
+        if(fi>=0) frames.splice(fi,1);
+        pops.splice(q,1);
+      }
+    }
+    var t=toks[i];
+    if(t.type==="space"||t.type==="comment") continue;
+    if(t.type==="punct"){
+      if(t.value==="{") frames.push({kind:"table"});
+      else if(t.value==="(") frames.push({kind:"paren"});
+      else if(t.value==="[") frames.push({kind:"bracket"});
+      else if(t.value==="}"){ var a=findFrame(["table"]); if(a>=0) frames.splice(a); }
+      else if(t.value===")"){ var b=findFrame(["paren"]); if(b>=0) frames.splice(b); }
+      else if(t.value==="]"){ var c=findFrame(["bracket"]); if(c>=0) frames.splice(c); }
+      continue;
+    }
+    if(t.type==="keyword"){
+      switch(t.value){
+        case "local": handleLocal(i); break;
+        case "function": handleFunction(i); break;
+        case "for": handleFor(i); break;
+        case "while": expect.push({kind:"while", depth:frames.length, scope:{vars:{}}, bindings:[]}); break;
+        case "if": expect.push({kind:"if", depth:frames.length}); break;
+        case "elseif": { var a2=findFrame(["block"]); if(a2>=0) frames.splice(a2); expect.push({kind:"elseif", depth:frames.length}); break; }
+        case "else": { var a3=findFrame(["block"]); if(a3>=0) frames.splice(a3); frames.push({kind:"block", scope:{vars:{}}}); break; }
+        case "then": handleThen(); break;
+        case "do": handleDo(i); break;
+        case "repeat": frames.push({kind:"repeat", scope:{vars:{}}}); break;
+        case "until": handleUntil(i); break;
+        case "end": { var a4=findFrame(["block","function"]); if(a4>=0) frames.splice(a4); break; }
+      }
+      continue;
+    }
+    if(t.type==="ident") handleIdent(i);
+  }
+  return {renameTo:renameTo, count:declCount};
 }
 
 /* ---------- Name generator (I / l / 1 style) ---------- */
@@ -544,7 +792,8 @@ function makeLoader(body, antiTamper){
     lines.push("if _H~=" + h + " then return end");
   }
   lines.push("local _B={}");
-  lines.push("for i=1,#_D do _B[i]=string.char(bit32.bxor(_D[i],_K[((i-1)%#_K)+1])) end");
+  lines.push("local _X=(bit32 and bit32.bxor) or function(a,b) local r=0 local p=1 while a>0 or b>0 do local aa=a%2 local bb=b%2 if aa~=bb then r=r+p end a=math.floor(a/2) b=math.floor(b/2) p=p*2 end return r end");
+  lines.push("for i=1,#_D do _B[i]=string.char(_X(_D[i],_K[((i-1)%#_K)+1])) end");
   lines.push("local _F=(loadstring or load)(table.concat(_B))");
   lines.push("if _F then return _F(...) end");
   return lines.join("\n");
@@ -722,21 +971,9 @@ function obfuscate(src, opts){
     return { code:vr.code+"\n", stats:{vars:0, strings:vr.chunks} };
   }
   var toks=lex(src);
-  var decl=collectDeclarations(toks);
-  var stats={vars:0, strings:0};
-
-  /* rename map */
-  var renameMap={};
-  if(opts.rename){
-    var used={};
-    toks.forEach(function(t){ if(t.type==="ident") used[t.value]=true; });
-    var gen=makeNameGen(used);
-    Object.keys(decl).forEach(function(name){
-      if(name==="self") return;
-      renameMap[name]=gen();
-    });
-    stats.vars=Object.keys(renameMap).length;
-  }
+  var analysis=analyzeRenames(toks);
+  var renameTo=analysis.renameTo;
+  var stats={vars:analysis.count, strings:0};
 
   /* helper names */
   var decName=uniqueHelperName(src, "_SdEc");
@@ -757,7 +994,6 @@ function obfuscate(src, opts){
   }
 
   var parts=[]; /* {text, type} */
-  var braceDepth=0;
   for(i=0;i<toks.length;i++){
     var t=toks[i];
     if(t.type==="space"){
@@ -769,23 +1005,30 @@ function obfuscate(src, opts){
       continue;
     }
     if(t.type==="punct"){
-      if(t.value==="}") braceDepth=Math.max(0,braceDepth-1);
       parts.push({text:t.value, type:"punct"});
-      if(t.value==="{") braceDepth++;
       continue;
     }
     if(t.type==="string"){
       var out=t.value;
-      if(opts.strings!=="none"){
+      var strMode=opts.strings;
+      if(strMode==="char"||strMode==="xor"){
+        /* A string used as a call argument without parentheses
+           (foo "x" / obj:m "x") must stay a string literal: replacing
+           it with a call expression would be a syntax error. Fall
+           back to the escape form for those strings. */
+        var sp=prevSig[i]>=0 ? toks[prevSig[i]] : null;
+        if(sp && (sp.type==="ident"||sp.type==="string"||sp.value===")"||sp.value==="]")) strMode="escape";
+      }
+      if(strMode!=="none"){
         var bytes=decodeStringToken(t.value);
         if(bytes!==null && bytes.length>0){
-          if(opts.strings==="escape"){
+          if(strMode==="escape"){
             out='"' + bytes.map(function(b){ return "\\"+("00"+b).slice(-3); }).join("") + '"';
             stats.strings++;
-          } else if(opts.strings==="char"){
+          } else if(strMode==="char"){
             out="string.char(" + bytes.join(",") + ")";
             stats.strings++;
-          } else if(opts.strings==="xor"){
+          } else if(strMode==="xor"){
             var key=randInt(1,255);
             var enc=bytes.map(function(b){ return b^key; });
             out=decName+"({"+enc.join(",")+"},"+key+")";
@@ -811,16 +1054,7 @@ function obfuscate(src, opts){
       continue;
     }
     if(t.type==="ident"){
-      var newName=null;
-      if(opts.rename && renameMap[t.value] && i>=decl[t.value]){
-        var p=prevSig[i]>=0 ? toks[prevSig[i]] : null;
-        var nx=nextSig[i]>=0 ? toks[nextSig[i]] : null;
-        var isField = p && (p.value==="."||p.value===":"||p.value==="::");
-        var isTableKey = braceDepth>0 && nx && nx.value==="=";
-        var isGotoLabel = p && p.value==="::";
-        if(!isField && !isTableKey && !isGotoLabel) newName=renameMap[t.value];
-      }
-      parts.push({text:newName||t.value, type:"ident"});
+      parts.push({text:renameTo[i]||t.value, type:"ident"});
       continue;
     }
     /* keyword */
@@ -837,7 +1071,8 @@ function obfuscate(src, opts){
         var need=false;
         if(la && fb && /[A-Za-z0-9_]/.test(la) && /[A-Za-z0-9_]/.test(fb)) need=true;
         if(la==="-" && fb==="-") need=true;
-        if(prev.type==="number" && pt.text.substr(0,2)==="..") need=true;
+        if(la==="." && fb===".") need=true;
+        if(prev.type==="number" && pt.text[0]===".") need=true;
         if(need) body+=" ";
       }
       body+=pt.text;
@@ -850,7 +1085,9 @@ function obfuscate(src, opts){
   /* prefix: decoder + junk */
   var prefix="";
   if(needDecoder){
-    prefix+="local "+decName+"=function(t,k) local o={} for i=1,#t do o[i]=string.char(bit32.bxor(t[i],k)) end return table.concat(o) end\n";
+    var bxName=uniqueHelperName(src, "_Bx");
+    prefix+="local "+bxName+"=(bit32 and bit32.bxor) or function(a,b) local r=0 local p=1 while a>0 or b>0 do local aa=a%2 local bb=b%2 if aa~=bb then r=r+p end a=math.floor(a/2) b=math.floor(b/2) p=p*2 end return r end\n";
+    prefix+="local "+decName+"=function(t,k) local o={} for i=1,#t do o[i]=string.char("+bxName+"(t[i],k)) end return table.concat(o) end\n";
   }
   if(opts.junk){
     prefix+=junkCode(junkPrefix)+"\n";
@@ -858,13 +1095,15 @@ function obfuscate(src, opts){
   body=prefix+body;
 
   if(opts.wrap && !opts.full){
-    body="(function(...)\n"+body+"\nend)(...)";
+    body="return (function(...)\n"+body+"\nend)(...)";
   }
   if(opts.full){
     body=makeLoader(body, opts.tamper);
   }
   return { code:"-- Obfuscated\n"+body+"\n", stats:stats };
 }
+
+
 
 /* ============================================================
    UI
