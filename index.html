@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
 <link rel="icon" href="data:," />
 <title>Lua難読化ツール</title>
@@ -31,14 +31,17 @@
       --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -12px rgba(0,0,0,.6);
     }
   }
-  *{box-sizing:border-box}
-  html,body{margin:0;padding:0}
+  *{box-sizing:border-box;touch-action:manipulation}
+  html,body{margin:0;padding:0;touch-action:manipulation}
   body{
     background:var(--bg); color:var(--text);
     font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic UI","Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
     font-size:15px; line-height:1.6;
     -webkit-text-size-adjust:100%;
+    text-size-adjust:100%;
   }
+  /* iOS Safari focus zoom prevention: form controls must be >=16px */
+  input,select,textarea{font-size:16px}
   button,[role="button"],select,summary,input:not([type="checkbox"]){min-height:2.25rem}
   .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 40px}
 
@@ -93,7 +96,7 @@
 
   .select-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   select{
-    font:inherit;font-size:13.5px;color:var(--text);background:var(--panel-2);
+    font:inherit;font-size:16px;color:var(--text);background:var(--panel-2);
     border:1px solid var(--border-strong);border-radius:8px;padding:6px 10px;min-height:38px;max-width:100%;
   }
 
@@ -126,7 +129,7 @@
     width:100%;flex:1;min-height:330px;resize:vertical;border:0;outline:none;
     background:var(--editor);color:var(--text);
     font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
-    font-size:13px;line-height:1.6;padding:13px 14px;tab-size:4;white-space:pre;overflow:auto;
+    font-size:16px;line-height:1.6;padding:13px 14px;tab-size:4;white-space:pre;overflow:auto;
   }
   @media (max-width:880px){ textarea.code{min-height:250px} }
   textarea.code::placeholder{color:var(--faint)}
@@ -1344,6 +1347,30 @@ document.addEventListener("DOMContentLoaded", function(){
     }).catch(function(){ setStatus("ファイルの読み込みに失敗しました。", "err"); });
   });
 });
+</script>
+<script>
+"use strict";
+/* Prevent pinch / double-tap / gesture zoom (viewport + touch-action
+   cover most browsers; these handlers cover iOS Safari gestures) */
+document.addEventListener("gesturestart", function(e){ e.preventDefault(); }, {passive:false});
+document.addEventListener("gesturechange", function(e){ e.preventDefault(); }, {passive:false});
+document.addEventListener("gestureend", function(e){ e.preventDefault(); }, {passive:false});
+document.addEventListener("touchmove", function(e){
+  if(e.touches && e.touches.length>1) e.preventDefault();
+}, {passive:false});
+document.addEventListener("dblclick", function(e){ e.preventDefault(); }, {passive:false});
+(function(){
+  var lastTouchEnd=0;
+  document.addEventListener("touchend", function(e){
+    var now=Date.now();
+    var target=e.target;
+    var interactive=target && target.closest && target.closest("button, input, select, textarea, label, a, .opt, .segmented");
+    if(now-lastTouchEnd<=300 && !interactive){
+      e.preventDefault();
+    }
+    lastTouchEnd=now;
+  }, {passive:false});
+})();
 </script>
 </body>
 </html>
